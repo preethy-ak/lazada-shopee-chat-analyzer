@@ -89,11 +89,44 @@ html, body, [class*="css"] { font-family: 'Inter', 'Segoe UI', sans-serif; }
 .sent-neg { color:#C0392B; font-weight:600; }
 
 /* ── Sidebar ── */
-.css-1d391kg { background: #1B2A4A !important; }
 section[data-testid="stSidebar"] { background: #1B2A4A !important; }
-section[data-testid="stSidebar"] * { color: #D4E6F1 !important; }
-section[data-testid="stSidebar"] .stSelectbox label,
-section[data-testid="stSidebar"] .stMultiSelect label { color: #A8C0D6 !important; font-size: 0.82rem; }
+section[data-testid="stSidebar"] .stMarkdown h2,
+section[data-testid="stSidebar"] .stMarkdown h3 {
+    color: #00C4B4 !important; font-size: 1rem !important; font-weight: 700 !important;
+}
+section[data-testid="stSidebar"] .stMarkdown p,
+section[data-testid="stSidebar"] .stMarkdown span { color: #FFFFFF !important; }
+/* Filter labels — bright white */
+section[data-testid="stSidebar"] label,
+section[data-testid="stSidebar"] .stSelectbox > label,
+section[data-testid="stSidebar"] .stMultiSelect > label,
+section[data-testid="stSidebar"] .stDateInput > label,
+section[data-testid="stSidebar"] .stTextInput > label {
+    color: #FFFFFF !important;
+    font-size: 0.85rem !important;
+    font-weight: 600 !important;
+    letter-spacing: 0.3px !important;
+}
+/* Input boxes — white background for contrast */
+section[data-testid="stSidebar"] .stSelectbox > div > div,
+section[data-testid="stSidebar"] .stMultiSelect > div > div,
+section[data-testid="stSidebar"] .stDateInput > div > div > input,
+section[data-testid="stSidebar"] .stTextInput > div > div > input {
+    background: #FFFFFF !important;
+    color: #1B2A4A !important;
+    border-radius: 6px !important;
+    border: 1.5px solid #00C4B4 !important;
+}
+section[data-testid="stSidebar"] .stSelectbox svg,
+section[data-testid="stSidebar"] .stMultiSelect svg { color: #1B2A4A !important; fill: #1B2A4A !important; }
+/* Multiselect tag pills */
+section[data-testid="stSidebar"] .stMultiSelect span[data-baseweb="tag"] {
+    background: #00C4B4 !important; color: #fff !important;
+}
+/* Sidebar divider */
+section[data-testid="stSidebar"] hr { border-color: #2E4A6A !important; }
+/* Result count text */
+section[data-testid="stSidebar"] strong { color: #00C4B4 !important; }
 
 /* ── Tabs ── */
 .stTabs [data-baseweb="tab-list"] { background: #fff; border-radius:8px; padding:4px; gap:4px; }
@@ -588,8 +621,11 @@ def fmt_mins(mins) -> str:
 
 
 def get_team_member(store_code: str) -> str:
-    """Return agent name for a given store code."""
-    return STORE_TO_AGENT.get(str(store_code).strip().upper(), "Unassigned")
+    """Return agent name for a given store code. Unknown stores → 'Others (CODE)'."""
+    code = str(store_code).strip().upper()
+    if not code:
+        return "Others (Unknown)"
+    return STORE_TO_AGENT.get(code, f"Others ({code})")
 
 
 def detect_conversion(buyer_msgs: list) -> bool:
@@ -1007,29 +1043,34 @@ def sentiment_span(s: str) -> str:
 # SIDEBAR FILTERS
 # ─────────────────────────────────────────────────────────────────────────────
 
-def apply_filters(conv_df: pd.DataFrame) -> pd.DataFrame:
+def apply_filters(conv_df: pd.DataFrame, today_ts: pd.Timestamp) -> pd.DataFrame:
     st.sidebar.markdown("## 🔍 Filters")
     st.sidebar.markdown("---")
 
-    # Platform
-    platforms = ["All"] + sorted(conv_df["PLATFORM"].unique().tolist())
-    sel_platform = st.sidebar.selectbox("Platform", platforms)
+    # ── Platform ──────────────────────────────────────────────────────────────
+    platforms = ["All"] + sorted(conv_df["PLATFORM"].dropna().unique().tolist())
+    sel_platform = st.sidebar.selectbox("🌐 Platform", platforms)
     if sel_platform != "All":
         conv_df = conv_df[conv_df["PLATFORM"] == sel_platform]
 
-    # Date range — use Timestamp min/max to avoid pandas 3.0 dt.date issues
+    # ── Date Range — default to last 7 days, full data available ─────────────
     _ts_min = conv_df["LAST_MSG_TIME"].dropna().min()
     _ts_max = conv_df["LAST_MSG_TIME"].dropna().max()
     min_date = _ts_min.date() if pd.notna(_ts_min) else datetime.today().date()
     max_date = _ts_max.date() if pd.notna(_ts_max) else datetime.today().date()
+
+    # Default: last 7 days (or start of data if less than 7 days available)
+    default_start = max(min_date, (today_ts - pd.Timedelta(days=6)).date())
+    default_end   = max_date
+
     date_range = st.sidebar.date_input(
-        "Date Range",
-        value=(min_date, max_date),
+        "📅 Date Range",
+        value=(default_start, default_end),
         min_value=min_date,
         max_value=max_date,
+        help="Default: last 7 days. Change to compare any period e.g. Jan vs Feb.",
     )
     if isinstance(date_range, (list, tuple)) and len(date_range) == 2:
-        # Compare against Timestamps for pandas 3.0 compatibility
         start_ts = pd.Timestamp(date_range[0])
         end_ts   = pd.Timestamp(date_range[1]) + pd.Timedelta(hours=23, minutes=59, seconds=59)
         conv_df = conv_df[
@@ -1037,65 +1078,69 @@ def apply_filters(conv_df: pd.DataFrame) -> pd.DataFrame:
             (conv_df["LAST_MSG_TIME"] <= end_ts)
         ]
 
-    # Priority
+    # ── Priority ──────────────────────────────────────────────────────────────
     prio_opts = ["All", "High", "Medium", "Low"]
-    sel_prio = st.sidebar.selectbox("Priority", prio_opts)
+    sel_prio = st.sidebar.selectbox("🔴 Priority", prio_opts)
     if sel_prio != "All":
         conv_df = conv_df[conv_df["PRIORITY"] == sel_prio]
 
-    # Sentiment
+    # ── Sentiment ─────────────────────────────────────────────────────────────
     sent_opts = ["All", "Positive", "Neutral", "Negative"]
-    sel_sent = st.sidebar.selectbox("Sentiment", sent_opts)
+    sel_sent = st.sidebar.selectbox("😊 Sentiment", sent_opts)
     if sel_sent != "All":
         conv_df = conv_df[conv_df["SENTIMENT"] == sel_sent]
 
-    # Resolved
+    # ── Resolution Status ─────────────────────────────────────────────────────
     res_opts = ["All", "Resolved", "Unresolved"]
-    sel_res = st.sidebar.selectbox("Resolution Status", res_opts)
+    sel_res = st.sidebar.selectbox("✅ Resolution Status", res_opts)
     if sel_res == "Resolved":
         conv_df = conv_df[conv_df["IS_RESOLVED"]]
     elif sel_res == "Unresolved":
         conv_df = conv_df[conv_df["IS_UNRESOLVED"]]
 
-    st.sidebar.markdown("---")
-    st.sidebar.markdown("### 🔎 Search")
-
-    # STORE_CODE
-    stores = sorted(conv_df["STORE_CODE"].dropna().unique().tolist())
-    sel_stores = st.sidebar.multiselect("Store Code", stores)
-    if sel_stores:
-        conv_df = conv_df[conv_df["STORE_CODE"].isin(sel_stores)]
-
-    # SITE_NICK_NAME_ID
-    sites = sorted(conv_df["SITE_NICK_NAME_ID"].dropna().unique().tolist())
-    sel_sites = st.sidebar.multiselect("Site Nickname", sites)
-    if sel_sites:
-        conv_df = conv_df[conv_df["SITE_NICK_NAME_ID"].isin(sel_sites)]
-
-    # COUNTRY_CODE
-    countries = sorted(conv_df["COUNTRY_CODE"].dropna().unique().tolist())
-    sel_countries = st.sidebar.multiselect("Country Code", countries)
-    if sel_countries:
-        conv_df = conv_df[conv_df["COUNTRY_CODE"].isin(sel_countries)]
-
-    # BUYER_NAME free text search
-    buyer_search = st.sidebar.text_input("Buyer Name (search)")
-    if buyer_search:
-        conv_df = conv_df[conv_df["BUYER_NAME"].str.contains(buyer_search, case=False, na=False)]
-
-    # CONVERSATION_ID free text
-    conv_search = st.sidebar.text_input("Conversation ID (search)")
-    if conv_search:
-        conv_df = conv_df[conv_df["CONVERSATION_ID"].str.contains(conv_search, case=False, na=False)]
-
-    # Issue type
-    issue_opts = ["All"] + sorted(conv_df["ISSUE_TYPE"].unique().tolist())
-    sel_issue = st.sidebar.selectbox("Issue Type", issue_opts)
+    # ── Issue Type ────────────────────────────────────────────────────────────
+    issue_opts = ["All"] + sorted(conv_df["ISSUE_TYPE"].dropna().unique().tolist())
+    sel_issue = st.sidebar.selectbox("🏷️ Issue Type", issue_opts)
     if sel_issue != "All":
         conv_df = conv_df[conv_df["ISSUE_TYPE"] == sel_issue]
 
     st.sidebar.markdown("---")
-    st.sidebar.markdown(f"**{len(conv_df):,}** conversations match filters")
+    st.sidebar.markdown("### 🔎 Search & Filter")
+
+    # ── Team Member ───────────────────────────────────────────────────────────
+    if "TEAM_MEMBER" in conv_df.columns:
+        all_agents = sorted(conv_df["TEAM_MEMBER"].dropna().unique().tolist())
+        sel_agents = st.sidebar.multiselect("👤 Team Member", all_agents)
+        if sel_agents:
+            conv_df = conv_df[conv_df["TEAM_MEMBER"].isin(sel_agents)]
+
+    # ── Store Code ────────────────────────────────────────────────────────────
+    stores = sorted(conv_df["STORE_CODE"].dropna().unique().tolist())
+    sel_stores = st.sidebar.multiselect("🏪 Store Code", stores)
+    if sel_stores:
+        conv_df = conv_df[conv_df["STORE_CODE"].isin(sel_stores)]
+
+    # ── Country ───────────────────────────────────────────────────────────────
+    countries = sorted(conv_df["COUNTRY_CODE"].dropna().unique().tolist())
+    sel_countries = st.sidebar.multiselect("🌍 Country", countries)
+    if sel_countries:
+        conv_df = conv_df[conv_df["COUNTRY_CODE"].isin(sel_countries)]
+
+    # ── Buyer Name ────────────────────────────────────────────────────────────
+    buyer_search = st.sidebar.text_input("🔍 Buyer Name")
+    if buyer_search:
+        conv_df = conv_df[conv_df["BUYER_NAME"].str.contains(buyer_search, case=False, na=False)]
+
+    # ── Conversation ID ───────────────────────────────────────────────────────
+    conv_search = st.sidebar.text_input("🔍 Conversation ID")
+    if conv_search:
+        conv_df = conv_df[conv_df["CONVERSATION_ID"].str.contains(conv_search, case=False, na=False)]
+
+    st.sidebar.markdown("---")
+    total = len(conv_df)
+    st.sidebar.markdown(f"**{total:,}** conversations match filters")
+    if total == 0:
+        st.sidebar.warning("No results — try widening the date range or clearing filters.")
     return conv_df
 
 
@@ -1126,32 +1171,31 @@ def main():
         """)
         return
 
-    # ── Load & Filter ─────────────────────────────────────────────────────────
+    # ── Load ALL Data ─────────────────────────────────────────────────────────
     with st.spinner("⏳ Loading chat data…"):
         raw_df = load_data(uploaded.read())
 
-    # pandas 3.0 fix: .dt.date.max() fails with NaT/float mixing — use Timestamp.max() then .date()
+    # pandas 3.0 fix: use .dropna().max() on Timestamp series, never .dt.date.max()
     _max_ts = raw_df["MESSAGE_TIME"].dropna().max()
+    _min_ts = raw_df["MESSAGE_TIME"].dropna().min()
     today_date = _max_ts.date() if pd.notna(_max_ts) else datetime.today().date()
-    today_str = today_date.strftime("%Y-%m-%d")
-    today_ts  = pd.Timestamp(today_date)          # used throughout for comparisons
-
-    # Filter to last 7 days — compare Timestamps, not date objects
-    cutoff = today_ts - timedelta(days=6)
-    df_7day = raw_df[raw_df["MESSAGE_TIME"] >= cutoff].copy()
+    today_str  = today_date.strftime("%Y-%m-%d")
+    today_ts   = pd.Timestamp(today_date)
+    data_start = _min_ts.date() if pd.notna(_min_ts) else today_date
 
     st.success(
-        f"✅ Loaded **{len(raw_df):,}** messages across "
-        f"**{raw_df['PLATFORM'].nunique()}** platforms. "
-        f"Analysing last 7 days: **{cutoff.date()}** → **{today_date}**"
+        f"✅ Loaded **{len(raw_df):,}** messages · "
+        f"**{raw_df['CONVERSATION_ID'].nunique():,}** conversations · "
+        f"**{raw_df['PLATFORM'].nunique()}** platforms · "
+        f"Data range: **{data_start}** → **{today_date}**"
     )
 
-    # ── Analyse ───────────────────────────────────────────────────────────────
-    with st.spinner("🔍 Analysing conversations (sentiment · issue type · CRT · CSAT)…"):
-        conv_df = analyse(df_7day)
+    # ── Analyse ALL conversations (full dataset) ───────────────────────────────
+    with st.spinner("🔍 Analysing all conversations — sentiment · issue type · CRT · CSAT…"):
+        conv_df = analyse(raw_df)
 
-    # ── Sidebar Filters ───────────────────────────────────────────────────────
-    conv_filtered = apply_filters(conv_df)
+    # ── Sidebar Filters (default = last 7 days view) ───────────────────────────
+    conv_filtered = apply_filters(conv_df, today_ts)
 
     if conv_filtered.empty:
         st.warning("No conversations match the current filters.")
@@ -1474,6 +1518,34 @@ def main():
                 },
             )
 
+            # ── Others — stores not assigned to any agent ─────────────────────
+            st.markdown("---")
+            st.markdown("**🔍 Unassigned / Other Stores in This Data**")
+            all_known = set(STORE_TO_AGENT.keys())
+            if "STORE_CODE" in conv_filtered.columns:
+                others_stores = sorted(
+                    s for s in conv_filtered["STORE_CODE"].dropna().unique()
+                    if str(s).strip().upper() not in all_known and str(s).strip()
+                )
+                if others_stores:
+                    others_rows = []
+                    for sc in others_stores:
+                        sc_df = conv_filtered[conv_filtered["STORE_CODE"] == sc]
+                        others_rows.append({
+                            "Store Code":    sc,
+                            "Platform":      sc_df["PLATFORM"].iloc[0] if not sc_df.empty else "—",
+                            "Country":       sc_df["COUNTRY_CODE"].iloc[0] if not sc_df.empty else "—",
+                            "Conversations": len(sc_df),
+                            "Team Member":   f"Others ({sc})",
+                        })
+                    st.dataframe(pd.DataFrame(others_rows), use_container_width=True, hide_index=True)
+                    st.caption(
+                        f"⚠️ {len(others_stores)} store(s) not assigned to any team member. "
+                        "Update TEAM_ASSIGNMENTS in the code to assign them."
+                    )
+                else:
+                    st.success("✅ All stores in this dataset are assigned to team members.")
+
             # ── Store assignments reference ───────────────────────────────────
             with st.expander("📋 Store → Agent Assignment Reference"):
                 assign_rows = []
@@ -1527,19 +1599,36 @@ def main():
 
     # ── Excel Download ────────────────────────────────────────────────────────
     st.markdown('<div class="section-title">⬇️ Download Report</div>', unsafe_allow_html=True)
-    with st.spinner("Building Excel report…"):
-        excel_bytes = build_excel(conv_filtered, today_str)
+    dl_col1, dl_col2 = st.columns(2)
 
-    st.download_button(
-        label="📥 Download Full Excel Report",
-        data=excel_bytes,
-        file_name=f"Chat_Analysis_{today_str}.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        use_container_width=True,
-    )
+    # Default download = last 7 days (same as sidebar default view)
+    cutoff_7d    = today_ts - pd.Timedelta(days=6)
+    conv_7day    = conv_df[conv_df["LAST_MSG_TIME"] >= cutoff_7d].copy()
+
+    with dl_col1:
+        with st.spinner("Building 7-day Excel report…"):
+            excel_7day = build_excel(conv_7day, today_str)
+        st.download_button(
+            label=f"📥 Download Last 7 Days ({cutoff_7d.date()} → {today_date})",
+            data=excel_7day,
+            file_name=f"Chat_Analysis_Last7Days_{today_str}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+        )
+    with dl_col2:
+        with st.spinner("Building filtered Excel report…"):
+            excel_filtered = build_excel(conv_filtered, today_str)
+        st.download_button(
+            label="📥 Download Current Filter View",
+            data=excel_filtered,
+            file_name=f"Chat_Analysis_Filtered_{today_str}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+        )
     st.caption(
-        "Excel contains: **Summary Dashboard** · **Today Priority Chats** · "
-        "**Detailed Chat Analysis** · **Unresolved Chats**"
+        "**Last 7 Days report**: default daily export · "
+        "**Filter View report**: matches whatever date/filter you've selected in the sidebar · "
+        "Dashboard can explore the full date range loaded from the file."
     )
 
 
