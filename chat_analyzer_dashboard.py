@@ -15,7 +15,7 @@ from datetime import datetime, timedelta
 
 warnings.filterwarnings("ignore")
 
-# ─────────────────────────────────────────────────────────────────────────────
+# ───────────────────A──────────────────────────────────────────────────────────
 # PAGE CONFIG — Graas.ai theme
 # ─────────────────────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -489,11 +489,12 @@ def load_data(file_bytes: bytes) -> pd.DataFrame:
         if col in combined.columns:
             combined[col] = combined[col].fillna("").astype(str).str.strip()
 
-    # Boolean flags
+    # Boolean flags — vectorised to avoid pandas 3.x lambda issues
     for flag in ["IS_READ", "IS_ANSWERED"]:
         if flag in combined.columns:
-            combined[flag] = combined[flag].map(
-                lambda x: str(x).lower() in ("true", "1", "yes") if x else False
+            combined[flag] = (
+                combined[flag].astype(str).str.strip().str.lower()
+                .isin(["true", "1", "yes"])
             )
 
     return combined
@@ -627,7 +628,7 @@ def build_excel(conv_df: pd.DataFrame, today_str: str) -> bytes:
         avg_crt    = conv_df["AVG_CRT_MINS"].mean()
         avg_csat   = conv_df["CSAT_PROXY"].mean()
 
-        today_df   = conv_df[conv_df["LAST_MSG_TIME"].dt.date == pd.Timestamp(today_str).date()]
+        today_df   = conv_df[conv_df["LAST_MSG_TIME"].dt.normalize() == pd.Timestamp(today_str)]
         hi_today   = len(today_df[today_df["PRIORITY"] == "High"])
 
         summary_data = [
@@ -729,7 +730,7 @@ def render_header():
     """, unsafe_allow_html=True)
 
 
-def render_metrics(conv_df: pd.DataFrame, today_date):
+def render_metrics(conv_df: pd.DataFrame, today_ts: pd.Timestamp):
     total      = len(conv_df)
     resolved   = int(conv_df["IS_RESOLVED"].sum())
     unresolved = int(conv_df["IS_UNRESOLVED"].sum())
@@ -737,7 +738,8 @@ def render_metrics(conv_df: pd.DataFrame, today_date):
     avg_crt    = conv_df["AVG_CRT_MINS"].mean()
     avg_csat   = conv_df["CSAT_PROXY"].mean()
 
-    today_conv  = conv_df[conv_df["LAST_MSG_TIME"].dt.date == today_date]
+    # Compare at day granularity using Timestamps (pandas 3.0 safe)
+    today_conv  = conv_df[conv_df["LAST_MSG_TIME"].dt.normalize() == today_ts]
     hi_today    = len(today_conv[today_conv["PRIORITY"] == "High"])
 
     neg_pct = round(len(conv_df[conv_df["SENTIMENT"] == "Negative"]) / total * 100, 1) if total else 0
@@ -789,9 +791,11 @@ def apply_filters(conv_df: pd.DataFrame) -> pd.DataFrame:
     if sel_platform != "All":
         conv_df = conv_df[conv_df["PLATFORM"] == sel_platform]
 
-    # Date range
-    min_date = conv_df["LAST_MSG_TIME"].dt.date.min()
-    max_date = conv_df["LAST_MSG_TIME"].dt.date.max()
+    # Date range — use Timestamp min/max to avoid pandas 3.0 dt.date issues
+    _ts_min = conv_df["LAST_MSG_TIME"].dropna().min()
+    _ts_max = conv_df["LAST_MSG_TIME"].dropna().max()
+    min_date = _ts_min.date() if pd.notna(_ts_min) else datetime.today().date()
+    max_date = _ts_max.date() if pd.notna(_ts_max) else datetime.today().date()
     date_range = st.sidebar.date_input(
         "Date Range",
         value=(min_date, max_date),
@@ -799,9 +803,12 @@ def apply_filters(conv_df: pd.DataFrame) -> pd.DataFrame:
         max_value=max_date,
     )
     if isinstance(date_range, (list, tuple)) and len(date_range) == 2:
+        # Compare against Timestamps for pandas 3.0 compatibility
+        start_ts = pd.Timestamp(date_range[0])
+        end_ts   = pd.Timestamp(date_range[1]) + pd.Timedelta(hours=23, minutes=59, seconds=59)
         conv_df = conv_df[
-            (conv_df["LAST_MSG_TIME"].dt.date >= date_range[0]) &
-            (conv_df["LAST_MSG_TIME"].dt.date <= date_range[1])
+            (conv_df["LAST_MSG_TIME"] >= start_ts) &
+            (conv_df["LAST_MSG_TIME"] <= end_ts)
         ]
 
     # Priority
@@ -897,13 +904,14 @@ def main():
     with st.spinner("⏳ Loading chat data…"):
         raw_df = load_data(uploaded.read())
 
-    today_date = raw_df["MESSAGE_TIME"].dt.date.max()
-    if pd.isna(today_date):
-        today_date = datetime.today().date()
-    today_str = str(today_date)
+    # pandas 3.0 fix: .dt.date.max() fails with NaT/float mixing — use Timestamp.max() then .date()
+    _max_ts = raw_df["MESSAGE_TIME"].dropna().max()
+    today_date = _max_ts.date() if pd.notna(_max_ts) else datetime.today().date()
+    today_str = today_date.strftime("%Y-%m-%d")
+    today_ts  = pd.Timestamp(today_date)          # used throughout for comparisons
 
-    # Filter to last 7 days
-    cutoff = pd.Timestamp(today_date) - timedelta(days=6)
+    # Filter to last 7 days — compare Timestamps, not date objects
+    cutoff = today_ts - timedelta(days=6)
     df_7day = raw_df[raw_df["MESSAGE_TIME"] >= cutoff].copy()
 
     st.success(
@@ -925,7 +933,7 @@ def main():
 
     # ── Metrics Row ───────────────────────────────────────────────────────────
     st.markdown('<div class="section-title">📈 Key Metrics</div>', unsafe_allow_html=True)
-    render_metrics(conv_filtered, today_date)
+    render_metrics(conv_filtered, today_ts)
 
     # ── Charts Row ────────────────────────────────────────────────────────────
     st.markdown('<div class="section-title">📊 Analytics</div>', unsafe_allow_html=True)
@@ -945,9 +953,10 @@ def main():
         st.bar_chart(sent_counts.set_index("Sentiment")["Count"])
 
     with c3:
+        # Use dt.normalize() (returns Timestamp at midnight) — pandas 3.0 safe
         daily = (
             conv_filtered
-            .assign(DATE=conv_filtered["LAST_MSG_TIME"].dt.date)
+            .assign(DATE=conv_filtered["LAST_MSG_TIME"].dt.normalize())
             .groupby("DATE")
             .size()
             .reset_index(name="Conversations")
@@ -970,7 +979,8 @@ def main():
     ]
 
     with tab1:
-        today_df = conv_filtered[conv_filtered["LAST_MSG_TIME"].dt.date == today_date]
+        # Use normalize() for date comparison — pandas 3.0 safe
+        today_df = conv_filtered[conv_filtered["LAST_MSG_TIME"].dt.normalize() == today_ts]
         today_sorted = today_df.sort_values(
             "PRIORITY",
             key=lambda s: s.map({"High": 0, "Medium": 1, "Low": 2}).fillna(3)
