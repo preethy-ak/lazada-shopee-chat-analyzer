@@ -739,6 +739,9 @@ def analyse(df: pd.DataFrame) -> pd.DataFrame:
         seller_msgs  = grp[grp["SENDER"].str.lower() == "seller"]["MESSAGE_PARSED"].tolist()
         all_msgs     = grp["MESSAGE_PARSED"].tolist()
 
+        # Metadata from first row of the group — must be defined early
+        meta = grp.iloc[0]
+
         # Full text for analysis (combine buyer messages)
         full_buyer_text = " ".join([m for m in buyer_msgs if isinstance(m, str)])
 
@@ -772,9 +775,6 @@ def analyse(df: pd.DataFrame) -> pd.DataFrame:
         # Last message time and date
         last_msg_time = grp["MESSAGE_TIME"].max()
         first_msg_time = grp["MESSAGE_TIME"].min()
-
-        # Metadata from first row of the group
-        meta = grp.iloc[0]
         rows.append({
             "CONVERSATION_ID":   conv_id,
             "PLATFORM":          meta.get("PLATFORM", ""),
