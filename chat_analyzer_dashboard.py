@@ -883,27 +883,23 @@ for sender, msg_time in grp[["_sender_lower", "MESSAGE_TIME"]].itertuples(index=
             "IS_ANSWERED":       str(_get("IS_ANSWERED")).lower() == "true",
             "IS_READ":           str(_get("IS_READ")).lower() == "true",
         })
-
     result = pd.DataFrame(rows)
 
-    # ── Memory optimisation: categorical dtypes for low-cardinality columns ───
+    # ── Memory optimisation: categorical dtypes ─────────────────────────
     for col in ["PLATFORM", "ISSUE_TYPE", "PRIORITY", "SENTIMENT",
-                "STORE_CODE", "CHANNEL_NAME", "COUNTRY_CODE", "TEAM_MEMBER", "SITE_NICK_NAME_ID"]:
+                "STORE_CODE", "COUNTRY_CODE", "TEAM_MEMBER", "SITE_NICK_NAME_ID"]:
         if col in result.columns:
             result[col] = result[col].astype("category")
 
-    # Truncate long text columns to reduce RAM (full text not needed in-memory)
-    for col in ["BUYER_SUMMARY"]:
-        if col in result.columns:
-            result[col] = result[col].str[:300]
+    # Truncate long text columns
+    if "BUYER_SUMMARY" in result.columns:
+        result["BUYER_SUMMARY"] = result["BUYER_SUMMARY"].astype(str).str[:300]
 
-    # Drop the heavy reply/action columns — looked up on-the-fly during display
-    # They are re-attached only when building Excel export
+    # Drop heavy columns
     result.drop(columns=["SUGGESTED_REPLY", "ACTION_STEPS"], errors="ignore", inplace=True)
 
-gc.collect()
+    gc.collect()
     return result
-
 # ─────────────────────────────────────────────────────────────────────────────
 # EXCEL EXPORT
 # ─────────────────────────────────────────────────────────────────────────────
