@@ -834,18 +834,19 @@ def analyse(df: pd.DataFrame) -> pd.DataFrame:
         priority      = get_priority(issue_type)
         csat          = compute_csat(sentiment, is_resolved)
 
-        # CRT: time between each buyer→seller pair
+               # CRT: time between each buyer→seller pair
         crt_list = []
-last_buyer_time = None
-
-for sender, msg_time in grp[["_sender_lower", "MESSAGE_TIME"]].itertuples(index=False, name=None):
-    if sender == "buyer":
-        last_buyer_time = msg_time
-    elif sender == "seller" and last_buyer_time is not None:
-        delta = (msg_time - last_buyer_time).total_seconds() / 60
-        if 0 <= delta <= 1440:
-            crt_list.append(delta)
         last_buyer_time = None
+
+        for sender, msg_time in grp[["_sender_lower", "MESSAGE_TIME"]].itertuples(index=False, name=None):
+            if sender == "buyer":
+                last_buyer_time = msg_time
+            elif sender == "seller" and last_buyer_time is not None:
+                delta = (msg_time - last_buyer_time).total_seconds() / 60
+                if 0 <= delta <= 1440:
+                    crt_list.append(delta)
+                last_buyer_time = None
+
         avg_crt = float(np.mean(crt_list)) if crt_list else np.nan
 
         def _get(field, default=""):
@@ -885,17 +886,14 @@ for sender, msg_time in grp[["_sender_lower", "MESSAGE_TIME"]].itertuples(index=
         })
     result = pd.DataFrame(rows)
 
-    # ── Memory optimisation: categorical dtypes ─────────────────────────
     for col in ["PLATFORM", "ISSUE_TYPE", "PRIORITY", "SENTIMENT",
                 "STORE_CODE", "COUNTRY_CODE", "TEAM_MEMBER", "SITE_NICK_NAME_ID"]:
         if col in result.columns:
             result[col] = result[col].astype("category")
 
-    # Truncate long text columns
     if "BUYER_SUMMARY" in result.columns:
         result["BUYER_SUMMARY"] = result["BUYER_SUMMARY"].astype(str).str[:300]
 
-    # Drop heavy columns
     result.drop(columns=["SUGGESTED_REPLY", "ACTION_STEPS"], errors="ignore", inplace=True)
 
     gc.collect()
