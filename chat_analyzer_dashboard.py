@@ -836,15 +836,16 @@ def analyse(df: pd.DataFrame) -> pd.DataFrame:
 
         # CRT: time between each buyer→seller pair
         crt_list = []
-        last_buyer_time = None
-        for sender, msg_time in grp[["_sender_lower", "MESSAGE_TIME"]].itertuples(index=False, name=None):
+last_buyer_time = None
+
+for sender, msg_time in grp[["_sender_lower", "MESSAGE_TIME"]].itertuples(index=False, name=None):
     if sender == "buyer":
         last_buyer_time = msg_time
     elif sender == "seller" and last_buyer_time is not None:
         delta = (msg_time - last_buyer_time).total_seconds() / 60
-                if 0 <= delta <= 1440:
-                    crt_list.append(delta)
-                last_buyer_time = None
+        if 0 <= delta <= 1440:
+            crt_list.append(delta)
+        last_buyer_time = None
         avg_crt = float(np.mean(crt_list)) if crt_list else np.nan
 
         def _get(field, default=""):
