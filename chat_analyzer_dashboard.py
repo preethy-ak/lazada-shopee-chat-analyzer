@@ -901,8 +901,8 @@ for sender, msg_time in grp[["_sender_lower", "MESSAGE_TIME"]].itertuples(index=
     # They are re-attached only when building Excel export
     result.drop(columns=["SUGGESTED_REPLY", "ACTION_STEPS"], errors="ignore", inplace=True)
 
-    gc.collect()
-    return result
+gc.collect()
+return result
 
 
 # ─────────────────────────────────────────────────────────────────────────────
